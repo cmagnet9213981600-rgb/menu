@@ -1,0 +1,256 @@
+// yshop-drink inspired multi-tenant cafe/restaurant management schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== Multi-Tenant Foundation ====================
+
+// Tenant = SaaS merchant (e.g., a chain operator)
+model Tenant {
+  id          String   @id @default(cuid())
+  name        String
+  contactName String?
+  contactMobile String?
+  domain      String?
+  packageId   String?
+  expireTime  DateTime?
+  accountCount Int    @default(10)
+  status      Int      @default(1) // 0 disabled, 1 active
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  stores      Store[]
+  users       User[]
+  products    Product[]
+  orders      Order[]
+  customers   Customer[]
+  coupons     Coupon[]
+  tables      RestaurantTable[]
+  categories  Category[]
+}
+
+// SaaS plan/feature package
+model TenantPackage {
+  id          String   @id @default(cuid())
+  name        String
+  remark      String?
+  menuIds     String   @default("[]") // JSON array of allowed menu ids
+  status      Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ==================== Users & RBAC ====================
+
+model User {
+  id          String   @id @default(cuid())
+  tenantId    String
+  username    String
+  password    String
+  nickname    String?
+  avatar      String?
+  phone       String?
+  email       String?
+  status      Int      @default(1) // 0 disabled, 1 active
+  deptId      String?
+  role        String   @default("staff") // admin / manager / staff / cashier
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  orders      Order[]
+
+  @@unique([tenantId, username])
+}
+
+// ==================== Stores (multi-shop per tenant) ====================
+
+model Store {
+  id            String   @id @default(cuid())
+  tenantId      String
+  name          String
+  phone         String?
+  images        String?  // JSON array of image URLs
+  address       String?
+  latitude      Float?
+  longitude     Float?
+  startTime     String?  // business hours start
+  endTime       String?
+  distance      Float    @default(0) // delivery radius km
+  minPrice      Float    @default(0) // 起送价
+  deliveryPrice Float    @default(0) // 配送费
+  notice        String?  // announcement
+  status        Int      @default(1) // 0 closed, 1 open
+  adminId       String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  orders        Order[]
+  tables        RestaurantTable[]
+}
+
+// ==================== Tables (dine-in) ====================
+
+model RestaurantTable {
+  id          String   @id @default(cuid())
+  tenantId    String
+  storeId     String
+  name        String   // e.g., "桌号 1"
+  seats       Int      @default(4)
+  status      Int      @default(0) // 0 free, 1 occupied, 2 reserved
+  qrCode      String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  store       Store    @relation(fields: [storeId], references: [id])
+  orders      Order[]
+}
+
+// ==================== Product Catalog ====================
+
+model Category {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  sort        Int      @default(0)
+  status      Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+  products    Product[]
+}
+
+model Product {
+  id            String   @id @default(cuid())
+  tenantId      String
+  categoryId    String
+  storeId       String?
+  name          String
+  description   String?
+  image         String?
+  price         Float
+  costPrice     Float    @default(0)
+  vipPrice      Float?
+  stock         Int      @default(0)
+  sales         Int      @default(0)
+  ficti         Int      @default(0) // virtual sales
+  isHot         Int      @default(0)
+  isNew         Int      @default(0)
+  isBest        Int      @default(0)
+  isBenefit     Int      @default(0) // 推荐
+  isSeckill     Int      @default(0) // flash sale
+  isPostage     Int      @default(1) // 0 free shipping
+  giveIntegral  Float    @default(0)
+  unit          String   @default("份")
+  barCode       String?
+  status        Int      @default(1) // 0 off-shelf, 1 on-shelf
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  category      Category @relation(fields: [categoryId], references: [id])
+  orderItems    OrderItem[]
+}
+
+// ==================== Orders ====================
+
+model Order {
+  id            String   @id @default(cuid())
+  tenantId      String
+  storeId       String
+  orderNo       String   @unique
+  userId        String?
+  tableId       String?
+  customerName  String?
+  customerPhone String?
+  orderType     String   // dinein / takeout / pickup
+  shippingType  Int      @default(2) // 1 express, 2 store pickup
+  numberId      Int?     // pickup number 取餐号
+  verifyCode    String?  // pickup verify code
+  status        Int      @default(0) // -2 returned, -1 refund req, 0 pending, 1 paid, 2 preparing, 3 completed, 4 cancelled
+  refundStatus  Int      @default(0) // 0 none, 1 applying, 2 refunded
+  totalNum      Int      @default(0)
+  totalPrice    Float    @default(0)
+  payPrice      Float    @default(0)
+  payType       String?  // wechat / alipay / cash / card
+  paid          Int      @default(0)
+  payTime       DateTime?
+  get_time      DateTime? // pickup time
+  remark        String?
+  address       String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  tenant        Tenant   @relation(fields: [tenantId], references: [id])
+  store         Store    @relation(fields: [storeId], references: [id])
+  user          User?    @relation(fields: [userId], references: [id])
+  table         RestaurantTable? @relation(fields: [tableId], references: [id])
+  items         OrderItem[]
+
+  @@index([tenantId, storeId])
+  @@index([status])
+}
+
+model OrderItem {
+  id          String   @id @default(cuid())
+  orderId     String
+  productId   String
+  productName String
+  productImage String?
+  price       Float
+  costPrice   Float    @default(0)
+  quantity    Int
+  subtotal    Float
+  createdAt   DateTime @default(now())
+
+  order       Order    @relation(fields: [orderId], references: [id])
+  product     Product  @relation(fields: [productId], references: [id])
+}
+
+// ==================== Customers (C-end users) ====================
+
+model Customer {
+  id          String   @id @default(cuid())
+  tenantId    String
+  nickname    String?
+  avatar      String?
+  phone       String?
+  balance     Float    @default(0)
+  integral    Float    @default(0) // points
+  level       Int      @default(1)
+  status      Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+}
+
+// ==================== Coupons / Marketing ====================
+
+model Coupon {
+  id          String   @id @default(cuid())
+  tenantId    String
+  name        String
+  type        Int      @default(0) // 0 general, 1 pickup, 2 takeout
+  least       Float    @default(0) // min spend
+  value       Float    @default(0) // discount
+  startTime   DateTime?
+  endTime     DateTime?
+  receive     Int      @default(0) // claimed count
+  distribute  Int      @default(0) // issued count
+  limit       Int      @default(1) // per-user cap
+  status      Int      @default(1)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tenant      Tenant   @relation(fields: [tenantId], references: [id])
+}
